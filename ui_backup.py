@@ -19,10 +19,6 @@ class App:
         root.geometry("1280x800")
         root.minsize(1000, 650)
 
-        self.style = ttk.Style()
-        self.initial_theme = self.style.theme_use()
-        self.dark_mode = False
-
         self.graph = Graph(7)
         self.source_idx = None
         self.target_idx = None
@@ -36,7 +32,6 @@ class App:
         self._build_main_area()
 
         self._set_nav_state(False)
-        self._apply_theme()
 
     def _build_top_bar(self):
         bar = ttk.Frame(self.root, padding=6)
@@ -69,10 +64,6 @@ class App:
         self.run_btn = ttk.Button(bar, text="Ejecutar Dijkstra", command=self.on_run, state="disabled")
         self.run_btn.pack(side="left")
 
-        # Botón para alternar entre Modo Claro y Modo Oscuro
-        self.theme_btn = ttk.Button(bar, text="🌙 Modo Oscuro", command=self.toggle_dark_mode)
-        self.theme_btn.pack(side="right", padx=(12, 4))
-
     def _build_main_area(self):
         area = ttk.Frame(self.root)
         area.pack(side="top", fill="both", expand=True)
@@ -83,19 +74,6 @@ class App:
 
         left = ttk.Frame(area)
         left.pack(side="left", fill="both", expand=True)
-
-        zoom_bar = ttk.Frame(left, padding=(4, 2))
-        zoom_bar.pack(side="top", fill="x")
-
-        ttk.Button(zoom_bar, text="🔍+ Acercar", width=12,
-                   command=lambda: self.visualizer.zoom_in()).pack(side="left", padx=2)
-        ttk.Button(zoom_bar, text="🔍- Alejar", width=12,
-                   command=lambda: self.visualizer.zoom_out()).pack(side="left", padx=2)
-        ttk.Button(zoom_bar, text="↺ Restablecer", width=13,
-                   command=lambda: self.visualizer.reset_zoom()).pack(side="left", padx=2)
-        ttk.Label(zoom_bar, text="(Rueda del ratón para zoom • Arrastra para mover)",
-                  font=("TkDefaultFont", 8)).pack(side="left", padx=8)
-
         self.visualizer = GraphVisualizer(left, self.graph)
         self.visualizer.widget().pack(fill="both", expand=True)
         self.visualizer.render()
@@ -136,11 +114,11 @@ class App:
     def _build_result_panel(self):
         self.info_frame = ttk.Frame(self.right)
 
-        tree_font = tkfont.Font(family="TkDefaultFont", size=8)
+        tree_font = tkfont.Font(family="TkDefaultFont", size=6)
         style = ttk.Style()
         style.configure("Dijkstra.Treeview", font=tree_font,
-                         rowheight=tree_font.metrics("linespace") + 5)
-        style.configure("Dijkstra.Treeview.Heading", font=(tree_font.actual("family"), 8, "bold"))
+                         rowheight=tree_font.metrics("linespace") + 4)
+        style.configure("Dijkstra.Treeview.Heading", font=(tree_font.actual("family"), 6, "bold"))
 
         dist_frame = ttk.LabelFrame(self.info_frame, text="Tabla de distancias", padding=4)
         dist_frame.pack(fill="both", expand=False, pady=(0, 6))
@@ -148,7 +126,7 @@ class App:
         self.tree = ttk.Treeview(dist_frame, columns=cols, show="headings", height=10,
                                   style="Dijkstra.Treeview")
         for c, txt, w in zip(cols, ["Nodo", "Distancia", "Visitado", "Predecesor(es)"],
-                              [46, 74, 66, 140]):
+                              [52, 84, 74, 130]):
             self.tree.heading(c, text=txt)
             self.tree.column(c, width=w, anchor="center")
         self.tree.pack(fill="both", expand=True)
@@ -156,8 +134,7 @@ class App:
 
         msg_frame = ttk.LabelFrame(self.info_frame, text="Mensaje del paso actual", padding=4)
         msg_frame.pack(fill="both", expand=False, pady=(0, 6))
-        self.msg_text = tk.Text(msg_frame, height=4, wrap="word", state="disabled",
-                                font=("TkDefaultFont", 9), padx=4, pady=4)
+        self.msg_text = tk.Text(msg_frame, height=4, wrap="word", state="disabled")
         self.msg_text.pack(fill="both", expand=True)
 
         result_frame = ttk.LabelFrame(self.info_frame, text="Resultados finales", padding=4)
@@ -169,8 +146,7 @@ class App:
         self.path_selector.pack(fill="x", side="bottom", pady=(4, 0))
         self.path_selector.bind("<<ComboboxSelected>>", lambda e: self.render_current())
 
-        self.result_text = tk.Text(result_frame, height=8, wrap="word", state="disabled",
-                                   font=("TkDefaultFont", 9), padx=4, pady=4)
+        self.result_text = tk.Text(result_frame, height=8, wrap="word", state="disabled")
         self.result_text.pack(fill="both", expand=True, side="top")
 
     def _build_nav_bar(self):
@@ -256,7 +232,7 @@ class App:
         self.graph.add_edge(u, v, w)
         self.edge_list.insert("end", f"{u_label} → {v_label}   (peso {w})")
         self.edge_w_var.set("")
-        self.visualizer.set_graph(self.graph, reset_view=False)
+        self.visualizer.set_graph(self.graph)
         self.visualizer.render()
 
     def on_remove_edge(self):
@@ -270,7 +246,7 @@ class App:
         v = self.graph.index_of_label(right.split("(")[0].strip())
         self.graph.remove_edge(u, v)
         self.edge_list.delete(idx)
-        self.visualizer.set_graph(self.graph, reset_view=False)
+        self.visualizer.set_graph(self.graph)
         self.visualizer.render()
 
     def on_finish_manual(self):
@@ -496,9 +472,8 @@ class App:
 
     def _build_path_colors(self, paths, shown_indices):
         colors = {}
-        path_colors = self.visualizer.get_path_colors()
         for i in shown_indices:
-            color = path_colors[i % len(path_colors)]
+            color = PATH_COLORS[i % len(PATH_COLORS)]
             for a, b in zip(paths[i], paths[i][1:]):
                 colors.setdefault((a, b), []).append(color)
         return colors
@@ -506,210 +481,4 @@ class App:
     def _legend_for_paths(self, shown_indices):
         if len(shown_indices) <= 1:
             return None
-        path_colors = self.visualizer.get_path_colors()
-        return [(f"Camino {i + 1}", path_colors[i % len(path_colors)]) for i in shown_indices]
-
-    def toggle_dark_mode(self):
-        self.dark_mode = not self.dark_mode
-        self._apply_theme()
-
-    def _apply_theme(self):
-        style = self.style
-        if self.dark_mode:
-            self.theme_btn.config(text="☀️ Modo Claro")
-            bg_main = "#1e1e1e"
-            bg_panel = "#252526"
-            bg_input = "#2d2d2d"
-            fg_text = "#e0e0e0"
-            border_col = "#3c3c3c"
-
-            try:
-                style.theme_use("clam")
-            except Exception:
-                pass
-
-            self.root.configure(bg=bg_main)
-
-            # Estilos generales de frames y etiquetas
-            style.configure(".", background=bg_main, foreground=fg_text)
-            style.configure("TFrame", background=bg_main)
-            style.configure("TLabelframe", background=bg_panel, bordercolor=border_col,
-                            darkcolor=bg_panel, lightcolor=bg_panel)
-            style.configure("TLabelframe.Label", background=bg_panel, foreground=fg_text)
-            style.configure("TLabel", background=bg_main, foreground=fg_text)
-
-            # Radiobutton: evitar recuadro blanco al pasar el mouse (hover/active/focus)
-            style.configure("TRadiobutton", background=bg_main, foreground=fg_text,
-                            indicatorbackground="#2d2d2d", indicatorcolor="#ffffff", focuscolor="")
-            style.map("TRadiobutton",
-                      background=[("active", bg_main), ("selected", bg_main), ("disabled", bg_main)],
-                      foreground=[("active", "#ffffff"), ("disabled", "#6e6e6e")],
-                      indicatorbackground=[("pressed", "#0d47a1"), ("selected", "#1976d2"),
-                                           ("active", "#3e3e42"), ("disabled", "#252526"),
-                                           ("!disabled", "#2d2d2d")],
-                      indicatorcolor=[("selected", "#ffffff"), ("pressed", "#ffffff"),
-                                      ("!disabled", "#2d2d2d")])
-
-            # Botones: hover limpio sin bordes blancos de relieve 3D ni foco punteado
-            style.configure("TButton", background=bg_input, foreground="#ffffff",
-                            bordercolor=border_col, darkcolor=bg_input, lightcolor=bg_input, focuscolor="")
-            style.map("TButton",
-                      background=[("pressed", "#0d47a1"), ("active", "#3e3e42"),
-                                  ("disabled", "#252526"), ("!disabled", bg_input)],
-                      foreground=[("disabled", "#6e6e6e"), ("!disabled", "#ffffff")],
-                      bordercolor=[("pressed", "#0d47a1"), ("active", "#555555"),
-                                   ("!disabled", border_col)],
-                      darkcolor=[("pressed", "#0d47a1"), ("active", "#3e3e42"),
-                                 ("!disabled", bg_input)],
-                      lightcolor=[("pressed", "#0d47a1"), ("active", "#3e3e42"),
-                                  ("!disabled", bg_input)])
-
-            # Spinbox: flechas y campo oscuros
-            style.configure("TSpinbox", fieldbackground=bg_input, background=bg_input,
-                            foreground=fg_text, arrowcolor=fg_text, bordercolor=border_col,
-                            darkcolor=bg_input, lightcolor=bg_input, focuscolor="")
-            style.map("TSpinbox",
-                      fieldbackground=[("focus", bg_input), ("active", "#383838"),
-                                       ("disabled", "#252526"), ("!disabled", bg_input)],
-                      background=[("active", "#3e3e42"), ("pressed", "#0d47a1"),
-                                  ("disabled", "#252526"), ("!disabled", bg_input)],
-                      foreground=[("disabled", "#6e6e6e"), ("active", "#ffffff"),
-                                  ("!disabled", fg_text)],
-                      arrowcolor=[("active", "#ffffff"), ("disabled", "#555555"),
-                                  ("!disabled", fg_text)],
-                      bordercolor=[("focus", "#007acc"), ("active", "#555555")])
-
-            # Combobox: fondo oscuro al pasar el cursor y lista desplegable oscura
-            style.configure("TCombobox", fieldbackground=bg_input, background=bg_input,
-                            foreground=fg_text, arrowcolor=fg_text, bordercolor=border_col,
-                            darkcolor=bg_input, lightcolor=bg_input, focuscolor="",
-                            selectbackground="#0d47a1", selectforeground="#ffffff")
-            style.map("TCombobox",
-                      fieldbackground=[("readonly", "focus", bg_input),
-                                       ("readonly", "active", "#383838"),
-                                       ("readonly", bg_input),
-                                       ("disabled", "#252526")],
-                      background=[("active", "#3e3e42"), ("pressed", "#0d47a1"),
-                                  ("disabled", "#252526"), ("!disabled", bg_input)],
-                      foreground=[("readonly", "focus", "#ffffff"),
-                                  ("readonly", "active", "#ffffff"),
-                                  ("disabled", "#6e6e6e"),
-                                  ("!disabled", fg_text)],
-                      arrowcolor=[("active", "#ffffff"), ("disabled", "#555555"),
-                                  ("!disabled", fg_text)],
-                      bordercolor=[("focus", "#007acc"), ("active", "#555555")])
-            self.root.option_add("*TCombobox*Listbox.background", bg_input)
-            self.root.option_add("*TCombobox*Listbox.foreground", fg_text)
-            self.root.option_add("*TCombobox*Listbox.selectBackground", "#0d47a1")
-            self.root.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
-
-            # Entry
-            style.configure("TEntry", fieldbackground=bg_input, background=bg_input,
-                            foreground=fg_text, bordercolor=border_col,
-                            darkcolor=bg_input, lightcolor=bg_input, focuscolor="",
-                            insertcolor="#ffffff")
-            style.map("TEntry",
-                      fieldbackground=[("focus", bg_input), ("active", "#383838"),
-                                       ("disabled", "#252526"), ("!disabled", bg_input)],
-                      foreground=[("disabled", "#6e6e6e"), ("!disabled", fg_text)],
-                      bordercolor=[("focus", "#007acc"), ("active", "#555555")])
-
-            # Treeview y encabezados
-            tree_font = tkfont.Font(family="TkDefaultFont", size=8)
-            style.configure("Dijkstra.Treeview", background=bg_panel, foreground=fg_text,
-                            fieldbackground=bg_panel, font=tree_font,
-                            rowheight=tree_font.metrics("linespace") + 5)
-            style.configure("Dijkstra.Treeview.Heading", background="#333333", foreground="#ffffff",
-                            bordercolor=border_col, font=(tree_font.actual("family"), 8, "bold"))
-            style.map("Dijkstra.Treeview.Heading",
-                      background=[("active", "#444444"), ("pressed", "#2d2d2d")],
-                      foreground=[("active", "#ffffff")])
-            self.tree.tag_configure("current", background="#5c3d11", foreground="#ffffff")
-
-            # Áreas de texto y lista de aristas
-            self.msg_text.config(bg=bg_panel, fg=fg_text, insertbackground="#ffffff",
-                                 highlightthickness=1, highlightbackground=border_col)
-            self.result_text.config(bg=bg_panel, fg=fg_text, insertbackground="#ffffff",
-                                   highlightthickness=1, highlightbackground=border_col)
-            self.edge_list.config(bg=bg_panel, fg=fg_text, selectbackground="#0d47a1",
-                                  selectforeground="#ffffff", highlightthickness=1, highlightbackground=border_col)
-        else:
-            self.theme_btn.config(text="🌙 Modo Oscuro")
-            try:
-                style.theme_use(self.initial_theme)
-            except Exception:
-                pass
-
-            bg_light = "#f0f0f0"
-            self.root.configure(bg=bg_light)
-            style.configure(".", background=bg_light, foreground="#000000")
-            style.configure("TFrame", background=bg_light)
-            style.configure("TLabelframe", background=bg_light)
-            style.configure("TLabelframe.Label", background=bg_light, foreground="#000000")
-            style.configure("TLabel", background=bg_light, foreground="#000000")
-            style.configure("TRadiobutton", background=bg_light, foreground="#000000")
-            style.map("TRadiobutton",
-                      background=[("active", bg_light)],
-                      foreground=[("active", "#000000")],
-                      indicatorbackground=[],
-                      indicatorcolor=[])
-
-            style.configure("TSpinbox", fieldbackground="#ffffff", background="#ffffff",
-                            foreground="#000000", arrowcolor="#000000")
-            style.map("TSpinbox",
-                      fieldbackground=[("disabled", "#f0f0f0")],
-                      background=[("active", "#e0e0e0")],
-                      arrowcolor=[],
-                      bordercolor=[])
-
-            style.configure("TCombobox", fieldbackground="#ffffff", background="#ffffff",
-                            foreground="#000000", arrowcolor="#000000")
-            style.map("TCombobox",
-                      fieldbackground=[("readonly", "#ffffff"), ("disabled", "#f0f0f0")],
-                      background=[("active", "#e0e0e0")],
-                      foreground=[],
-                      arrowcolor=[],
-                      bordercolor=[])
-
-            style.configure("TEntry", fieldbackground="#ffffff", background="#ffffff", foreground="#000000")
-            style.map("TEntry",
-                      fieldbackground=[("disabled", "#f0f0f0")],
-                      foreground=[("disabled", "#a0a0a0")],
-                      bordercolor=[])
-
-            style.configure("TButton", background="#e1e1e1", foreground="#000000")
-            style.map("TButton",
-                      background=[("active", "#ececec"), ("disabled", "#f4f4f4")],
-                      foreground=[("disabled", "#a0a0a0")],
-                      bordercolor=[],
-                      darkcolor=[],
-                      lightcolor=[])
-
-            self.root.option_add("*TCombobox*Listbox.background", "#ffffff")
-            self.root.option_add("*TCombobox*Listbox.foreground", "#000000")
-            self.root.option_add("*TCombobox*Listbox.selectBackground", "#0078d7")
-            self.root.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
-
-            tree_font = tkfont.Font(family="TkDefaultFont", size=8)
-            style.configure("Dijkstra.Treeview", background="#ffffff", foreground="#000000",
-                            fieldbackground="#ffffff", font=tree_font,
-                            rowheight=tree_font.metrics("linespace") + 5)
-            style.configure("Dijkstra.Treeview.Heading", background="#e1e1e1", foreground="#000000",
-                            font=(tree_font.actual("family"), 8, "bold"))
-            style.map("Dijkstra.Treeview.Heading",
-                      background=[("active", "#d0d0d0")],
-                      foreground=[("active", "#000000")])
-            self.tree.tag_configure("current", background="#ffe0b2", foreground="#000000")
-
-            self.msg_text.config(bg="#ffffff", fg="#000000", insertbackground="#000000",
-                                 highlightthickness=1, highlightbackground="#cccccc")
-            self.result_text.config(bg="#ffffff", fg="#000000", insertbackground="#000000",
-                                   highlightthickness=1, highlightbackground="#cccccc")
-            self.edge_list.config(bg="#ffffff", fg="#000000", selectbackground="#0078d7",
-                                  selectforeground="#ffffff", highlightthickness=1, highlightbackground="#cccccc")
-
-        self.visualizer.set_dark_mode(self.dark_mode)
-        if self.steps:
-            self.render_current()
-        else:
-            self.visualizer.render()
+        return [(f"Camino {i + 1}", PATH_COLORS[i % len(PATH_COLORS)]) for i in shown_indices]
