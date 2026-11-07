@@ -1,10 +1,13 @@
+import json
 import math
+import os
 import tkinter as tk
 import tkinter.font as tkfont
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from dijkstra import all_min_paths, run_dijkstra
-from graph_model import Graph, generate_random_dag, topological_layers
+from graph_model import (LABELS, MAX_NODES, Graph, generate_advanced_dag, load_graph,
+                         save_graph, topological_layers)
 from visualizer import PATH_COLORS, GraphVisualizer
 
 
@@ -17,13 +20,14 @@ class App:
         self.root = root
         root.title("Visualizador de Dijkstra")
         root.geometry("1280x800")
-        root.minsize(1000, 650)
+        root.minsize(1100, 650)
 
         self.style = ttk.Style()
         self.initial_theme = self.style.theme_use()
         self.dark_mode = False
 
         self.graph = Graph(7)
+        self.graph_ready = False
         self.source_idx = None
         self.target_idx = None
         self.steps = []
@@ -32,27 +36,34 @@ class App:
         self.auto_job = None
 
         self._build_top_bar()
+        self._build_options_bar()
         self._build_nav_bar()
         self._build_main_area()
 
         self._set_nav_state(False)
+        self._on_n_changed()
+        self._on_mode_change()
         self._apply_theme()
 
     def _build_top_bar(self):
         bar = ttk.Frame(self.root, padding=6)
         bar.pack(side="top", fill="x")
+        self.top_bar = bar
 
         ttk.Label(bar, text="n:").pack(side="left")
         self.n_var = tk.IntVar(value=10)
-        ttk.Spinbox(bar, from_=7, to=16, width=4, textvariable=self.n_var).pack(
+        ttk.Spinbox(bar, from_=7, to=MAX_NODES, width=4, textvariable=self.n_var).pack(
             side="left", padx=(2, 12))
+        self.n_var.trace_add("write", lambda *a: self._on_n_changed())
 
         self.mode_var = tk.StringVar(value="random")
-        ttk.Radiobutton(bar, text="Manual", value="manual", variable=self.mode_var).pack(side="left")
-        ttk.Radiobutton(bar, text="Aleatorio", value="random", variable=self.mode_var).pack(
-            side="left", padx=(0, 12))
+        for text, value in (("Aleatorio", "random"), ("Formulario", "manual"), ("Dibujo", "draw")):
+            ttk.Radiobutton(bar, text=text, value=value, variable=self.mode_var).pack(
+                side="left", padx=(0, 4))
+        self.mode_var.trace_add("write", lambda *a: self._on_mode_change())
 
-        ttk.Button(bar, text="Generar grafo", command=self.on_generate).pack(side="left", padx=(0, 24))
+        self.gen_btn = ttk.Button(bar, text="Generar grafo", command=self.on_generate)
+        self.gen_btn.pack(side="left", padx=(8, 24))
 
         ttk.Label(bar, text="Origen:").pack(side="left")
         self.source_var = tk.StringVar()
@@ -72,6 +83,47 @@ class App:
         # Botón para alternar entre Modo Claro y Modo Oscuro
         self.theme_btn = ttk.Button(bar, text="🌙 Modo Oscuro", command=self.toggle_dark_mode)
         self.theme_btn.pack(side="right", padx=(12, 4))
+        ttk.Button(bar, text="Cargar", width=8, command=self.on_load).pack(side="right", padx=2)
+        ttk.Button(bar, text="Guardar", width=8, command=self.on_save).pack(side="right", padx=2)
+
+    def _build_options_bar(self):
+        """Opciones del generador aleatorio (solo visibles en modo Aleatorio)."""
+        self.options_bar = ttk.LabelFrame(self.root, text="Opciones del grafo aleatorio", padding=(8, 2))
+
+        self.forbid_direct_var = tk.BooleanVar(value=True)
+        self.min_hops_var = tk.IntVar(value=4)
+        self.max_out_var = tk.IntVar(value=3)
+        self.density_var = tk.StringVar(value="Media")
+        self.force_tie_var = tk.BooleanVar(value=False)
+        self.min_paths_var = tk.IntVar(value=2)
+        self.w_min_var = tk.IntVar(value=1)
+        self.w_max_var = tk.IntVar(value=99)
+
+        def spin(parent, var, lo, hi):
+            return ttk.Spinbox(parent, from_=lo, to=hi, width=4, textvariable=var)
+
+        r1 = ttk.Frame(self.options_bar)
+        r1.pack(fill="x", pady=1)
+        ttk.Checkbutton(r1, text="Prohibir arista directa Origen → Destino",
+                        variable=self.forbid_direct_var).pack(side="left", padx=(0, 16))
+        ttk.Label(r1, text="Saltos mínimos:").pack(side="left")
+        spin(r1, self.min_hops_var, 1, MAX_NODES - 1).pack(side="left", padx=(2, 16))
+        ttk.Label(r1, text="Máx. salidas por nodo:").pack(side="left")
+        spin(r1, self.max_out_var, 2, 4).pack(side="left", padx=(2, 16))
+        ttk.Label(r1, text="Densidad:").pack(side="left")
+        ttk.Combobox(r1, textvariable=self.density_var, values=["Baja", "Media", "Alta"],
+                     width=7, state="readonly").pack(side="left", padx=2)
+
+        r2 = ttk.Frame(self.options_bar)
+        r2.pack(fill="x", pady=1)
+        ttk.Checkbutton(r2, text="Forzar empate entre caminos óptimos",
+                        variable=self.force_tie_var).pack(side="left", padx=(0, 16))
+        ttk.Label(r2, text="Caminos alternativos (mín.):").pack(side="left")
+        spin(r2, self.min_paths_var, 1, 20).pack(side="left", padx=(2, 16))
+        ttk.Label(r2, text="Peso mín.:").pack(side="left")
+        spin(r2, self.w_min_var, 1, 99).pack(side="left", padx=(2, 8))
+        ttk.Label(r2, text="máx.:").pack(side="left")
+        spin(r2, self.w_max_var, 1, 99).pack(side="left", padx=2)
 
     def _build_main_area(self):
         area = ttk.Frame(self.root)
@@ -93,8 +145,13 @@ class App:
                    command=lambda: self.visualizer.zoom_out()).pack(side="left", padx=2)
         ttk.Button(zoom_bar, text="↺ Restablecer", width=13,
                    command=lambda: self.visualizer.reset_zoom()).pack(side="left", padx=2)
-        ttk.Label(zoom_bar, text="(Rueda del ratón para zoom • Arrastra para mover)",
-                  font=("TkDefaultFont", 8)).pack(side="left", padx=8)
+        self.hint_label = ttk.Label(zoom_bar, font=("TkDefaultFont", 8))
+        self.hint_label.pack(side="left", padx=8)
+        self.draw_buttons = ttk.Frame(zoom_bar)
+        ttk.Button(self.draw_buttons, text="Acomodar en capas",
+                   command=self.on_auto_layout).pack(side="left", padx=2)
+        ttk.Button(self.draw_buttons, text="Limpiar lienzo",
+                   command=self._new_canvas).pack(side="left", padx=2)
 
         self.visualizer = GraphVisualizer(left, self.graph)
         self.visualizer.widget().pack(fill="both", expand=True)
@@ -199,25 +256,96 @@ class App:
             self.manual_frame.pack_forget()
             self.info_frame.pack(fill="both", expand=True)
 
+    # ------------------------------------------------------------ modos
+    def _on_n_changed(self):
+        if self.mode_var.get() != "draw":
+            self._refresh_combos(LABELS[:self._read_n()])
+            self._update_run_state()
+
+    def _read_n(self):
+        try:
+            return max(2, min(MAX_NODES, int(self.n_var.get())))
+        except (tk.TclError, ValueError):
+            return 7
+
+    def _on_mode_change(self):
+        mode = self.mode_var.get()
+        self.gen_btn.config(text={"random": "Generar grafo", "manual": "Crear grafo",
+                                  "draw": "Nuevo lienzo"}[mode])
+        if mode == "random":
+            self.options_bar.pack(side="top", fill="x", padx=6, after=self.top_bar)
+        else:
+            self.options_bar.pack_forget()
+        if mode != "manual":
+            self.show_manual_panel(False)
+
+        drawing = mode == "draw"
+        self.visualizer.set_edit_mode(drawing, {
+            "empty_click": self._on_canvas_click,
+            "edge_drawn": self._on_edge_drawn,
+            "delete_node": self._on_delete_node,
+            "delete_edge": self._on_delete_edge,
+        } if drawing else None)
+        if drawing:
+            self.hint_label.config(text="Clic: nodo • Nodo→nodo: arista • "
+                                        "Shift+arrastrar: mover • Clic der.: borrar")
+            self.draw_buttons.pack(side="right")
+            if not self.graph.edges():
+                self._new_canvas()
+            else:
+                self._refresh_combos(self.graph.labels)
+        else:
+            self.hint_label.config(text="(Rueda del ratón para zoom • Arrastra para mover)")
+            self.draw_buttons.pack_forget()
+            self._refresh_combos(LABELS[:self._read_n()])
+        self._update_run_state()
+
+    def _refresh_combos(self, labels):
+        """Actualiza Origen/Destino; conserva la selección si sigue siendo válida."""
+        src, dst = self.source_var.get(), self.target_var.get()
+        for combo in (self.source_combo, self.target_combo):
+            combo["values"] = labels
+        if not labels:
+            self.source_var.set("")
+            self.target_var.set("")
+            return
+        self.source_var.set(src if src in labels else labels[0])
+        self.target_var.set(dst if dst in labels and dst != self.source_var.get()
+                            else labels[-1])
+
+    def _update_run_state(self):
+        if self.mode_var.get() == "draw":
+            ready = self.graph.n >= 2 and bool(self.graph.edges())
+        else:
+            ready = self.graph_ready
+        self.run_btn.config(state="normal" if ready else "disabled")
+
+    def _set_message(self, text):
+        self.msg_text.config(state="normal")
+        self.msg_text.delete("1.0", "end")
+        self.msg_text.insert("1.0", text)
+        self.msg_text.config(state="disabled")
+
+    # ------------------------------------------------------------ generación
     def on_generate(self):
+        mode = self.mode_var.get()
+        if mode == "draw":
+            self._new_canvas()
+            return
         try:
             n = int(self.n_var.get())
         except (tk.TclError, ValueError):
-            messagebox.showerror("Error", "n debe ser un entero entre 7 y 16.")
+            messagebox.showerror("Error", f"n debe ser un entero entre 7 y {MAX_NODES}.")
             return
-        if not (7 <= n <= 16):
-            messagebox.showerror("Error", "n debe estar entre 7 y 16.")
+        if not (7 <= n <= MAX_NODES):
+            messagebox.showerror("Error", f"n debe estar entre 7 y {MAX_NODES}.")
             return
 
+        self.graph_ready = False
         self._reset_execution()
-        self.run_btn.config(state="disabled")
-        self.source_var.set("")
-        self.target_var.set("")
 
-        if self.mode_var.get() == "random":
-            self.graph = generate_random_dag(n)
-            self.show_manual_panel(False)
-            self._finish_graph_setup()
+        if mode == "random":
+            self._generate_random(n)
         else:
             self.graph = Graph(n)
             self.edge_from_combo["values"] = self.graph.labels
@@ -226,6 +354,37 @@ class App:
             self.show_manual_panel(True)
             self.visualizer.set_graph(self.graph)
             self.visualizer.render()
+            self._update_run_state()
+
+    def _generate_random(self, n):
+        src_label, dst_label = self.source_var.get(), self.target_var.get()
+        if src_label not in LABELS[:n] or dst_label not in LABELS[:n] or src_label == dst_label:
+            messagebox.showerror("Error", "Elija un Origen y un Destino distintos.")
+            return
+        try:
+            graph = generate_advanced_dag(
+                n, LABELS.index(src_label), LABELS.index(dst_label),
+                min_hops=int(self.min_hops_var.get()),
+                density=self.density_var.get().lower(),
+                max_out=int(self.max_out_var.get()),
+                forbid_direct=self.forbid_direct_var.get(),
+                force_tie=self.force_tie_var.get(),
+                min_paths=int(self.min_paths_var.get()),
+                w_min=int(self.w_min_var.get()),
+                w_max=int(self.w_max_var.get()))
+        except (tk.TclError, ValueError) as exc:
+            messagebox.showerror("Parámetros no válidos", str(exc))
+            return
+
+        self.graph = graph
+        self._finish_graph_setup()
+        info = graph.info
+        lines = [f"Grafo generado {src_label}→{dst_label}: mínimo {info['hops']} aristas entre ambos, "
+                 f"{info['paths']} caminos posibles.",
+                 f"Costo óptimo esperado d* = {info['optimal_cost']} "
+                 f"({info['optimal_paths']} camino(s) óptimo(s))."]
+        lines += info["warnings"]
+        self._set_message("\n".join(lines))
 
     def on_add_edge(self):
         u_label = self.edge_from_var.get()
@@ -294,16 +453,174 @@ class App:
         self.show_manual_panel(False)
         self._finish_graph_setup()
 
-    def _finish_graph_setup(self):
-        layers = topological_layers(self.graph)
-        self.visualizer.set_graph(self.graph, layers=layers)
+    def _finish_graph_setup(self, source=None, target=None, positions=None):
+        if positions is not None:
+            self.visualizer.set_graph(self.graph, positions=positions)
+        else:
+            self.visualizer.set_graph(self.graph, layers=topological_layers(self.graph))
         self.visualizer.render()
         labels = self.graph.labels
-        self.source_combo["values"] = labels
-        self.target_combo["values"] = labels
-        self.source_var.set(labels[0])
-        self.target_var.set(labels[-1])
-        self.run_btn.config(state="normal")
+        if source is not None and target is not None:
+            self.source_var.set(labels[source])
+            self.target_var.set(labels[target])
+        self._refresh_combos(labels)
+        self.graph_ready = True
+        self._update_run_state()
+
+    # ------------------------------------------------------------ modo dibujo
+    def _new_canvas(self):
+        self._reset_execution()
+        self.graph = Graph(0)
+        self.graph_ready = False
+        self.visualizer.set_graph(self.graph, positions={})
+        self.visualizer.render()
+        self._refresh_combos([])
+        self._update_run_state()
+        self._set_message("Lienzo vacío: haga clic para crear nodos "
+                          f"(hasta {self._read_n()}; cambie n para ampliar el límite).")
+
+    def _after_edit(self):
+        """Tras agregar/quitar nodos o aristas: invalida la ejecución y redibuja."""
+        self._reset_execution()
+        self.graph_ready = self.graph.n >= 2
+        self._refresh_combos(self.graph.labels)
+        self._update_run_state()
+        self.visualizer.render()
+
+    def _on_canvas_click(self, x, y):
+        if self.graph.n >= min(self._read_n(), MAX_NODES):
+            messagebox.showinfo("Límite de nodos",
+                                f"Ya hay {self.graph.n} nodos (límite n). Aumente n para agregar más.")
+            return
+        idx = self.graph.add_node()
+        self.visualizer.place_node(idx, x, y)
+        self._after_edit()
+
+    def _on_edge_drawn(self, u, v):
+        a, b = self.graph.labels[u], self.graph.labels[v]
+        if self.graph.has_edge(u, v):
+            messagebox.showerror("Error", f"La arista {a}→{b} ya existe.")
+            return
+        if self.graph.creates_cycle(u, v):
+            messagebox.showwarning("Ciclo detectado",
+                                   f"No se puede agregar {a}→{b}: crearía un ciclo.\n"
+                                   "El grafo debe seguir siendo un DAG.")
+            return
+        w = self._ask_weight(a, b)
+        if w is None:
+            return
+        self.graph.add_edge(u, v, w)
+        self._after_edit()
+
+    def _on_delete_node(self, node):
+        self.graph.remove_node(node)
+        self.visualizer.drop_node(node)
+        self._after_edit()
+
+    def _on_delete_edge(self, u, v):
+        self.graph.remove_edge(u, v)
+        self._after_edit()
+
+    def on_auto_layout(self):
+        if self.graph.n < 2:
+            return
+        self.visualizer.set_graph(self.graph, layers=topological_layers(self.graph))
+        self.visualizer.render()
+
+    def _dialog_colors(self):
+        if self.dark_mode:
+            return {"bg": "#252526", "fg": "#e0e0e0", "entry": "#2d2d2d", "btn": "#3e3e42",
+                    "err": "#ff6b6b"}
+        return {"bg": "#f0f0f0", "fg": "#000000", "entry": "#ffffff", "btn": "#e1e1e1",
+                "err": "#c62828"}
+
+    def _ask_weight(self, a, b):
+        """Diálogo propio (respeta el tema) para pedir el peso 1-99 de la arista a→b."""
+        c = self._dialog_colors()
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Peso de la arista")
+        dlg.configure(bg=c["bg"])
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+        result = {"value": None}
+
+        tk.Label(dlg, text=f"Peso de {a} → {b}  (1 a 99):", bg=c["bg"], fg=c["fg"]).pack(
+            padx=16, pady=(14, 6))
+        var = tk.StringVar()
+        entry = tk.Entry(dlg, textvariable=var, width=8, justify="center", bg=c["entry"],
+                         fg=c["fg"], insertbackground=c["fg"], relief="flat",
+                         highlightthickness=1, highlightbackground="#888888")
+        entry.pack(padx=16)
+        err = tk.Label(dlg, text="", bg=c["bg"], fg=c["err"], font=("TkDefaultFont", 8))
+        err.pack(pady=(4, 0))
+
+        def accept(event=None):
+            text = var.get().strip()
+            if text.isdigit() and 1 <= int(text) <= 99:
+                result["value"] = int(text)
+                dlg.destroy()
+            else:
+                err.config(text="Ingrese un entero entre 1 y 99.")
+
+        row = tk.Frame(dlg, bg=c["bg"])
+        row.pack(pady=(6, 12))
+        for text, cmd in (("Aceptar", accept), ("Cancelar", dlg.destroy)):
+            tk.Button(row, text=text, width=9, command=cmd, bg=c["btn"], fg=c["fg"],
+                      activebackground=c["btn"], activeforeground=c["fg"],
+                      relief="flat").pack(side="left", padx=4)
+        dlg.bind("<Return>", accept)
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
+
+        dlg.update_idletasks()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - dlg.winfo_width()) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - dlg.winfo_height()) // 3
+        dlg.geometry(f"+{x}+{y}")
+        dlg.grab_set()
+        entry.focus_set()
+        self.root.wait_window(dlg)
+        return result["value"]
+
+    # ------------------------------------------------------------ guardar / cargar
+    def _examples_dir(self):
+        folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ejemplos")
+        return folder if os.path.isdir(folder) else os.path.dirname(os.path.abspath(__file__))
+
+    def on_save(self):
+        if self.graph.n < 2 or not self.graph.edges():
+            messagebox.showinfo("Guardar", "No hay un grafo con aristas para guardar.")
+            return
+        path = filedialog.asksaveasfilename(
+            title="Guardar grafo", defaultextension=".json", initialdir=self._examples_dir(),
+            filetypes=[("Grafo JSON", "*.json")])
+        if not path:
+            return
+        labels = self.graph.labels
+        src = labels.index(self.source_var.get()) if self.source_var.get() in labels else None
+        dst = labels.index(self.target_var.get()) if self.target_var.get() in labels else None
+        try:
+            save_graph(path, self.graph, src, dst, self.visualizer.pos)
+        except OSError as exc:
+            messagebox.showerror("Guardar", f"No se pudo guardar el archivo:\n{exc}")
+
+    def on_load(self):
+        path = filedialog.askopenfilename(
+            title="Cargar grafo", initialdir=self._examples_dir(),
+            filetypes=[("Grafo JSON", "*.json"), ("Todos", "*.*")])
+        if not path:
+            return
+        try:
+            graph, src, dst, positions = load_graph(path)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            messagebox.showerror("Cargar", f"No se pudo cargar el grafo:\n{exc}")
+            return
+        self._reset_execution()
+        self.show_manual_panel(False)
+        self.graph = graph
+        if self.mode_var.get() != "draw":
+            self.n_var.set(graph.n)
+        self._finish_graph_setup(src, dst, positions)
+        self._set_message(f"Grafo cargado: {os.path.basename(path)} "
+                          f"({graph.n} nodos, {len(graph.edges())} aristas).")
 
     def on_run(self):
         src_label = self.source_var.get()
@@ -313,6 +630,11 @@ class App:
             return
         if src_label == dst_label:
             messagebox.showerror("Error", "Origen y destino deben ser distintos.")
+            return
+
+        if src_label not in self.graph.labels or dst_label not in self.graph.labels:
+            messagebox.showerror("Error", "Origen/destino no pertenecen al grafo actual. "
+                                          "Genere o cargue el grafo de nuevo.")
             return
 
         self.source_idx = self.graph.index_of_label(src_label)
@@ -533,9 +855,9 @@ class App:
             # Estilos generales de frames y etiquetas
             style.configure(".", background=bg_main, foreground=fg_text)
             style.configure("TFrame", background=bg_main)
-            style.configure("TLabelframe", background=bg_panel, bordercolor=border_col,
-                            darkcolor=bg_panel, lightcolor=bg_panel)
-            style.configure("TLabelframe.Label", background=bg_panel, foreground=fg_text)
+            style.configure("TLabelframe", background=bg_main, bordercolor=border_col,
+                            darkcolor=bg_main, lightcolor=bg_main)
+            style.configure("TLabelframe.Label", background=bg_main, foreground=fg_text)
             style.configure("TLabel", background=bg_main, foreground=fg_text)
 
             # Radiobutton: evitar recuadro blanco al pasar el mouse (hover/active/focus)
@@ -549,6 +871,19 @@ class App:
                                            ("!disabled", "#2d2d2d")],
                       indicatorcolor=[("selected", "#ffffff"), ("pressed", "#ffffff"),
                                       ("!disabled", "#2d2d2d")])
+
+            # Checkbutton (opciones avanzadas): mismo tratamiento que el Radiobutton
+            style.configure("TCheckbutton", background=bg_main, foreground=fg_text,
+                            indicatorbackground="#2d2d2d", indicatorforeground="#ffffff",
+                            indicatorcolor="#2d2d2d", focuscolor="")
+            style.map("TCheckbutton",
+                      background=[("active", bg_main), ("selected", bg_main), ("disabled", bg_main)],
+                      foreground=[("active", "#ffffff"), ("disabled", "#6e6e6e")],
+                      indicatorbackground=[("selected", "#1976d2"), ("active", "#3e3e42"),
+                                           ("!disabled", "#2d2d2d")],
+                      indicatorcolor=[("selected", "#1976d2"), ("active", "#3e3e42"),
+                                      ("!disabled", "#2d2d2d")],
+                      indicatorforeground=[("selected", "#ffffff"), ("!disabled", "#ffffff")])
 
             # Botones: hover limpio sin bordes blancos de relieve 3D ni foco punteado
             style.configure("TButton", background=bg_input, foreground="#ffffff",
@@ -617,10 +952,12 @@ class App:
             # Treeview y encabezados
             tree_font = tkfont.Font(family="TkDefaultFont", size=8)
             style.configure("Dijkstra.Treeview", background=bg_panel, foreground=fg_text,
-                            fieldbackground=bg_panel, font=tree_font,
+                            fieldbackground=bg_panel, font=tree_font, bordercolor=border_col,
+                            lightcolor=bg_panel, darkcolor=bg_panel,
                             rowheight=tree_font.metrics("linespace") + 5)
             style.configure("Dijkstra.Treeview.Heading", background="#333333", foreground="#ffffff",
-                            bordercolor=border_col, font=(tree_font.actual("family"), 8, "bold"))
+                            bordercolor=border_col, lightcolor="#333333", darkcolor="#333333",
+                            relief="flat", font=(tree_font.actual("family"), 8, "bold"))
             style.map("Dijkstra.Treeview.Heading",
                       background=[("active", "#444444"), ("pressed", "#2d2d2d")],
                       foreground=[("active", "#ffffff")])
@@ -653,6 +990,10 @@ class App:
                       foreground=[("active", "#000000")],
                       indicatorbackground=[],
                       indicatorcolor=[])
+
+            style.configure("TCheckbutton", background=bg_light, foreground="#000000")
+            style.map("TCheckbutton", background=[("active", bg_light)],
+                      foreground=[("active", "#000000")])
 
             style.configure("TSpinbox", fieldbackground="#ffffff", background="#ffffff",
                             foreground="#000000", arrowcolor="#000000")

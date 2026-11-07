@@ -4,6 +4,7 @@ import networkx as nx
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 import matplotlib.patches as mpatches
+from matplotlib.lines import Line2D
 
 THEME_PALETTES = {
     "light": {
@@ -94,9 +95,17 @@ class GraphVisualizer:
         self.base_ylim = (-1.1, 1.1)
         self._drag_data = {"x0": None, "y0": None, "xlim0": None, "ylim0": None, "dragging": False}
 
+        # Modo de dibujo interactivo: gesto en curso, línea guía y callbacks hacia la UI
+        self.edit_mode = False
+        self.handlers = {}
+        self._gesture = None
+        self._guide = None
+        self._last_render = {}
+
         self.set_graph(graph)
 
         # Mouse event bindings for zoom and pan
+        self.canvas.mpl_connect("resize_event", lambda e: self.apply_zoom())
         self.canvas.mpl_connect("scroll_event", self._on_scroll)
         self.canvas.mpl_connect("button_press_event", self._on_press)
         self.canvas.mpl_connect("button_release_event", self._on_release)
@@ -120,10 +129,14 @@ class GraphVisualizer:
     def widget(self):
         return self.canvas.get_tk_widget()
 
-    def set_graph(self, graph, layers=None, reset_view=True):
+    def set_graph(self, graph, layers=None, reset_view=True, positions=None):
         self.graph = graph
         pos = None
         num_layers = 1
+
+        if positions is not None:
+            pos = {k: tuple(v) for k, v in positions.items()}
+            layers = None
 
         if layers:
             try:
@@ -162,7 +175,9 @@ class GraphVisualizer:
 
         self.pos = pos
 
-        if layers:
+        if positions is not None:
+            self.node_radius = 0.06
+        elif layers:
             layer_gap = 2.0 / max(num_layers - 1, 1)
             self.node_radius = max(0.048, min(0.075, layer_gap * 0.30))
         else:
@@ -170,7 +185,12 @@ class GraphVisualizer:
             self.node_radius = max(0.050, min(0.075, chord * 0.22))
 
         # Calculate bounding box to fit the graph closely without excess empty margins
-        if self.pos:
+        if not self.pos:
+            self.base_xlim = (-1.1, 1.1)
+            self.base_ylim = (-1.1, 1.1)
+            if reset_view:
+                self.xlim, self.ylim = self.base_xlim, self.base_ylim
+        else:
             xs = [x for x, y in self.pos.values()]
             ys = [y for x, y in self.pos.values()]
             min_x, max_x = min(xs), max(xs)
@@ -184,7 +204,27 @@ class GraphVisualizer:
                 self.xlim = self.base_xlim
                 self.ylim = self.base_ylim
 
+    def _fit_limits(self):
+        """Amplía la ventana de datos para que coincida con la proporción del lienzo.
+
+        Con aspecto 'equal' Matplotlib recortaba el eje Y cuando el lienzo era bajo
+        (por ejemplo con el panel de opciones visible); así solo se amplía, nunca se recorta.
+        """
+        w, h = self.ax.bbox.width, self.ax.bbox.height
+        (x0, x1), (y0, y1) = self.xlim, self.ylim
+        if w > 0 and h > 0 and y1 > y0 and x1 > x0:
+            if (x1 - x0) / (y1 - y0) < w / h:
+                half = (y1 - y0) * w / h / 2.0
+                cx = (x0 + x1) / 2.0
+                x0, x1 = cx - half, cx + half
+            else:
+                half = (x1 - x0) * h / w / 2.0
+                cy = (y0 + y1) / 2.0
+                y0, y1 = cy - half, cy + half
+        self.xlim, self.ylim = (x0, x1), (y0, y1)
+
     def apply_zoom(self):
+        self._fit_limits()
         self.ax.set_xlim(self.xlim)
         self.ax.set_ylim(self.ylim)
         self.canvas.draw_idle()
@@ -227,9 +267,82 @@ class GraphVisualizer:
         self.ylim = (y_bottom, y_top)
         self.apply_zoom()
 
+    # ------------------------------------------------------------ edición
+    def set_edit_mode(self, enabled, handlers=None):
+        self.edit_mode = bool(enabled)
+        self.handlers = handlers or {}
+        self._gesture = None
+
+    def place_node(self, node, x, y):
+        self.pos[node] = (x, y)
+
+    def drop_node(self, node):
+        self.pos = {(k if k < node else k - 1): v for k, v in self.pos.items() if k != node}
+
+    def _call(self, name, *args):
+        handler = self.handlers.get(name)
+        if handler:
+            handler(*args)
+
+    def _node_at(self, x, y):
+        if x is None or y is None:
+            return None
+        best, best_d = None, self.node_radius * 1.15
+        for node, (nx, ny) in self.pos.items():
+            d = math.hypot(x - nx, y - ny)
+            if d <= best_d:
+                best, best_d = node, d
+        return best
+
+    def _edge_at(self, x, y):
+        if x is None or y is None:
+            return None
+        tol = self.node_radius * 0.45
+        for u, v, _ in self.graph.edges():
+            (x1, y1), (x2, y2) = self.pos[u], self.pos[v]
+            dx, dy = x2 - x1, y2 - y1
+            length2 = dx * dx + dy * dy
+            t = 0.0 if length2 == 0 else max(0.0, min(1.0, ((x - x1) * dx + (y - y1) * dy) / length2))
+            if math.hypot(x - (x1 + t * dx), y - (y1 + t * dy)) <= tol:
+                return (u, v)
+        return None
+
+    def _clear_guide(self):
+        if self._guide is not None:
+            try:
+                self._guide.remove()
+            except (ValueError, NotImplementedError):
+                pass
+            self._guide = None
+
+    # ------------------------------------------------------------ eventos
     def _on_press(self, event):
         if event.inaxes != self.ax:
             return
+        if self.edit_mode:
+            if event.button == 3:
+                node = self._node_at(event.xdata, event.ydata)
+                if node is not None:
+                    self._call("delete_node", node)
+                else:
+                    edge = self._edge_at(event.xdata, event.ydata)
+                    if edge is not None:
+                        self._call("delete_edge", *edge)
+                return
+            if event.button == 1:
+                node = self._node_at(event.xdata, event.ydata)
+                if node is not None:
+                    shift = bool(getattr(event.guiEvent, "state", 0) & 0x1)
+                    self._gesture = {"kind": "move" if shift else "edge", "node": node,
+                                     "x0": event.x, "y0": event.y, "moved": False}
+                    if not shift:
+                        x, y = self.pos[node]
+                        self._guide = Line2D([x, x], [y, y], color="#ff9800", lw=2.2,
+                                             ls="--", zorder=10)
+                        self.ax.add_line(self._guide)
+                    return
+                self._gesture = {"kind": "click", "x0": event.x, "y0": event.y, "moved": False,
+                                 "xdata": event.xdata, "ydata": event.ydata}
         if event.button in (1, 2, 3):
             self._drag_data["x0"] = event.x
             self._drag_data["y0"] = event.y
@@ -239,8 +352,37 @@ class GraphVisualizer:
 
     def _on_release(self, event):
         self._drag_data["dragging"] = False
+        g, self._gesture = self._gesture, None
+        if g is None:
+            return
+        inside = event.inaxes == self.ax
+        if g["kind"] == "edge":
+            self._clear_guide()
+            target = self._node_at(event.xdata, event.ydata) if inside else None
+            if g["moved"] and target is not None and target != g["node"]:
+                self._call("edge_drawn", g["node"], target)
+            self.render(**self._last_render)
+        elif g["kind"] == "move":
+            self.render(**self._last_render)
+        elif g["kind"] == "click" and not g["moved"] and inside:
+            self._call("empty_click", g["xdata"], g["ydata"])
 
     def _on_motion(self, event):
+        g = self._gesture
+        if g is not None and event.x is not None:
+            if math.hypot(event.x - g["x0"], event.y - g["y0"]) > 4:
+                g["moved"] = True
+            if g["kind"] in ("edge", "move"):
+                if event.inaxes != self.ax or event.xdata is None:
+                    return
+                if g["kind"] == "edge":
+                    x, y = self.pos[g["node"]]
+                    self._guide.set_data([x, event.xdata], [y, event.ydata])
+                    self.canvas.draw_idle()
+                elif g["moved"]:
+                    self.pos[g["node"]] = (event.xdata, event.ydata)
+                    self.render(**self._last_render)
+                return
         if not self._drag_data["dragging"] or event.x is None or event.y is None:
             return
         dx_pixels = event.x - self._drag_data["x0"]
@@ -259,6 +401,10 @@ class GraphVisualizer:
     def render(self, dist=None, visited=None, current=None, frontier=None,
                eval_edge=None, tree_edges=None, path_edge_colors=None,
                legend_entries=None):
+        self._last_render = dict(dist=dist, visited=visited, current=current,
+                                 frontier=frontier, eval_edge=eval_edge, tree_edges=tree_edges,
+                                 path_edge_colors=path_edge_colors, legend_entries=legend_entries)
+        self._guide = None
         theme = "dark" if self.dark_mode else "light"
         p = THEME_PALETTES[theme]
 
@@ -346,6 +492,7 @@ class GraphVisualizer:
                       facecolor=p["legend_bg"], edgecolor=p["legend_edge"],
                       labelcolor=p["legend_text"])
 
+        self._fit_limits()
         ax.set_xlim(self.xlim)
         ax.set_ylim(self.ylim)
         self.canvas.draw_idle()
