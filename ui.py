@@ -148,9 +148,9 @@ class App:
         self.hint_label = ttk.Label(zoom_bar, font=("TkDefaultFont", 8))
         self.hint_label.pack(side="left", padx=8)
         self.draw_buttons = ttk.Frame(zoom_bar)
-        ttk.Button(self.draw_buttons, text="Acomodar en capas",
+        ttk.Button(self.draw_buttons, text="Acomodar",
                    command=self.on_auto_layout).pack(side="left", padx=2)
-        ttk.Button(self.draw_buttons, text="Limpiar lienzo",
+        ttk.Button(self.draw_buttons, text="Limpiar",
                    command=self._new_canvas).pack(side="left", padx=2)
 
         self.visualizer = GraphVisualizer(left, self.graph)
@@ -287,8 +287,8 @@ class App:
             "delete_edge": self._on_delete_edge,
         } if drawing else None)
         if drawing:
-            self.hint_label.config(text="Clic: nodo • Nodo→nodo: arista • "
-                                        "Shift+arrastrar: mover • Clic der.: borrar")
+            self.hint_label.config(text="Clic: nodo • Arrastrar: arista • "
+                                        "Shift: mover • Clic der.: borrar")
             self.draw_buttons.pack(side="right")
             if not self.graph.edges():
                 self._new_canvas()

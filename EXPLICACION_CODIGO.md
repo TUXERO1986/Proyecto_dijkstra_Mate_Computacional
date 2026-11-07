@@ -198,6 +198,6 @@ El algoritmo termina y el mensaje final indica "No existe camino"; la distancia 
 ---
 
 ## 10. Observaciones para tener en cuenta
-- El grafo de `scripts/generar_graficos.py` (caso insignia, d* = 13) tiene **tres** caminos óptimos con esas aristas (`A→B→E→H`, `A→C→F→H` y además `A→C→E→H`, 5+3+5), no dos como dice el informe. Conviene revisar que el grafo y el texto del informe coincidan antes de la sustentación.
+- El grafo del informe (`ejemplos/grafo_informe_8nodos.json`) usa la arista C→E con peso **4** (con peso 3 aparecía un tercer camino óptimo A→C→E→H). Con peso 4 hay exactamente dos caminos de costo 13 y Dijkstra hace 23 pasos; el informe ya refleja estos valores.
 - Los avisos de error/información usan los cuadros nativos de Windows, que no cambian con el modo oscuro; el diálogo del peso sí.
 - En modo Dibujo, `n` es el límite de nodos; en modos Aleatorio/Formulario `n` es la cantidad exacta (7–16).
